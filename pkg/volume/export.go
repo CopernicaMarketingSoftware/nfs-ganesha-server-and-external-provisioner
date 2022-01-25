@@ -31,14 +31,14 @@ import (
 
 type exporter interface {
 	CanExport(int) bool
-	AddExportBlock(string, string, string, bool, string) (string, uint16, error)
+	AddExportBlock(string, string, bool, string) (string, uint16, error)
 	RemoveExportBlock(string, uint16) error
 	Export(string) error
 	Unexport(*v1.PersistentVolume) error
 }
 
 type exportBlockCreator interface {
-	CreateExportBlock(string, string, string, string, bool, string) string
+	CreateExportBlock(uint16, string, string, bool, string) string
 }
 
 type exportMap struct {
@@ -87,11 +87,10 @@ func newGenericExporter(ebc exportBlockCreator, config string, re *regexp.Regexp
 	}
 }
 
-func (e *genericExporter) AddExportBlock(namespace string, claimname string, path string, rootSquash bool, exportSubnet string) (string, uint16, error) {
+func (e *genericExporter) AddExportBlock(path string, pseudo string, rootSquash bool, exportSubnet string) (string, uint16, error) {
 	exportID := generateID(e.mapMutex, e.exportIDs)
-	exportIDStr := strconv.FormatUint(uint64(exportID), 10)
 
-	block := e.ebc.CreateExportBlock(exportIDStr, namespace, claimname, path, rootSquash, exportSubnet)
+	block := e.ebc.CreateExportBlock(exportID, path, pseudo, rootSquash, exportSubnet)
 
 	// Add the export block to the config file
 	if err := addToFile(e.fileMutex, e.config, block); err != nil {
@@ -161,26 +160,26 @@ type ganeshaExportBlockCreator struct{}
 var _ exportBlockCreator = &ganeshaExportBlockCreator{}
 
 // CreateBlock creates the text block to add to the ganesha config file.
-func (e *ganeshaExportBlockCreator) CreateExportBlock(exportID, namespace string, claimname string, path string, rootSquash bool, exportSubnet string) string {
+func (e *ganeshaExportBlockCreator) CreateExportBlock(exportID uint16, path string, pseudo string, rootSquash bool, exportSubnet string) string {
 	squash := "no_root_squash"
 	if rootSquash {
 		squash = "root_id_squash"
 	}
-    // note that we return two pseudo-lines here, one is going to be a copy of the actual path (which normally 
-    // is something like "/exports/pvc-randomcode-randomcode-randomcode" (or so)) and the other one is a more
-    // user friendly name that matches the namespace and the name of the PVC so that NFS clients can use the
-    // friendlier name to connect to the NFS share as well (this could be helpful in case someone wants to 
-    // connect to the share directly, instead of using a PersistentVolumeClaim, for example from outside
-    // the kubernetes cluster or from a pod in a different namespace)
+    
+    // convert the export-id to a string to use it with the '+' operator
+    exportIDStr := strconv.FormatUint(uint64(exportID), 10)
+    
+    // note the difference between path and pseudo: the path is how the data is stored on disk (usually
+    // something like "/export/pvc-random-random-random") and the pseudo holds the name as it is exported
+    // to clients (usually "/namespace/claimname")
 	return "\nEXPORT\n{\n" +
-		"\tExport_Id = " + exportID + ";\n" +
+		"\tExport_Id = " + exportIDStr + ";\n" +
 		"\tPath = " + path + ";\n" +
-		"\tPseudo = " + path + ";\n" +
-        "\tPseudo = " + namespace + "/" + claimname + ";\n" +
+		"\tPseudo = " + pseudo + ";\n" +
 		"\tAccess_Type = RW;\n" +
 		"\tSquash = " + squash + ";\n" +
 		"\tSecType = sys;\n" +
-		"\tFilesystem_id = " + exportID + "." + exportID + ";\n" +
+		"\tFilesystem_id = " + exportIDStr + "." + exportIDStr + ";\n" +
 		"\tFSAL {\n\t\tName = VFS;\n\t}\n}\n"
 }
 
@@ -224,10 +223,10 @@ type kernelExportBlockCreator struct{}
 var _ exportBlockCreator = &kernelExportBlockCreator{}
 
 // CreateBlock creates the text block to add to the /etc/exports file.
-func (e *kernelExportBlockCreator) CreateExportBlock(exportID, namespace string, claimname string, path string, rootSquash bool, exportSubnet string) string {
+func (e *kernelExportBlockCreator) CreateExportBlock(exportID uint16, path string, pseudo string, rootSquash bool, exportSubnet string) string {
 	squash := "no_root_squash"
 	if rootSquash {
 		squash = "root_squash"
 	}
-	return "\n" + path + " " + exportSubnet + "(rw,insecure," + squash + ",fsid=" + exportID + ")\n"
+	return "\n" + path + " " + exportSubnet + "(rw,insecure," + squash + ",fsid=" + strconv.FormatUint(uint64(exportID), 10) + ")\n"
 }

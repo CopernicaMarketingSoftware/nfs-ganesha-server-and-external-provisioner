@@ -274,13 +274,14 @@ func (p *nfsProvisioner) createVolume(options controller.ProvisionOptions) (volu
 	}
 
 	path := path.Join(p.exportDir, options.PVName)
+    pseudo := "/" + options.PVC.Namespace + "/" + options.PVC.Name;
 
 	err = p.createDirectory(options.PVName, gid)
 	if err != nil {
 		return volume{}, fmt.Errorf("error creating directory for volume: %v", err)
 	}
 
-	exportBlock, exportID, err := p.createExport(options.PVC.Namespace, options.PVC.Name, options.PVName, rootSquash)
+	exportBlock, exportID, err := p.createExport(path, pseudo, rootSquash)
 	if err != nil {
 		os.RemoveAll(path)
 		return volume{}, fmt.Errorf("error creating export for volume: %v", err)
@@ -294,7 +295,7 @@ func (p *nfsProvisioner) createVolume(options controller.ProvisionOptions) (volu
 
 	return volume{
 		server:       server,
-		path:         path,
+		path:         pseudo,
 		exportBlock:  exportBlock,
 		exportID:     exportID,
 		projectBlock: projectBlock,
@@ -520,10 +521,9 @@ func (p *nfsProvisioner) createDirectory(directory, gid string) error {
 
 // createExport creates the export by adding a block to the appropriate config
 // file and exporting it
-func (p *nfsProvisioner) createExport(namespace string, claimname string, directory string, rootSquash bool) (string, uint16, error) {
-	path := path.Join(p.exportDir, directory)
+func (p *nfsProvisioner) createExport(path string, pseudo string, rootSquash bool) (string, uint16, error) {
 
-	block, exportID, err := p.exporter.AddExportBlock(namespace, claimname, path, rootSquash, p.exportSubnet)
+	block, exportID, err := p.exporter.AddExportBlock(path, pseudo, rootSquash, p.exportSubnet)
 	if err != nil {
 		return "", 0, fmt.Errorf("error adding export block for path %s: %v", path, err)
 	}
